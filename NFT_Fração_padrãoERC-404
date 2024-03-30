@@ -1,0 +1,51 @@
+/// @notice Internal function for ERC-20 transfers with potential ERC-721 transfers.
+/// @dev This function handles both ERC-20 transfers and any ERC-721 transfers that may be required.
+/// @dev It first transfers whole tokens worth of ERC-20s directly, then checks if any ERC-721 transfers are needed for fractional amounts.
+/// @dev It handles ERC-721 exemptions for both sender and recipient addresses.
+function _transferERC20WithERC721(
+    address from_,
+    address to_,
+    uint256 value_
+) internal virtual returns (bool) {
+    // Record the ERC20 balances of sender and receiver before the transfer.
+    uint256 erc20BalanceOfSenderBefore = erc20BalanceOf(from_);
+    uint256 erc20BalanceOfReceiverBefore = erc20BalanceOf(to_);
+
+    // Perform the ERC-20 transfer.
+    _transferERC20(from_, to_, value_);
+
+    // Preload ERC-721 transfer exemption flags for better gas optimization.
+    bool isFromERC721TransferExempt = erc721TransferExempt(from_);
+    bool isToERC721TransferExempt = erc721TransferExempt(to_);
+
+    // Handle ERC-721 transfers if needed.
+    if (!isFromERC721TransferExempt || !isToERC721TransferExempt) {
+        // Calculate the number of whole tokens transferred.
+        uint256 nftsToTransfer = value_ / units;
+
+        // Transfer whole tokens worth of ERC-721s.
+        for (uint256 i = 0; i < nftsToTransfer; i++) {
+            // Transfer the ERC-721 token (last in, first out) from the sender to the recipient.
+            uint256 indexOfLastToken = _owned[from_].length - 1;
+            uint256 tokenId = _owned[from_][indexOfLastToken];
+            _transferERC721(from_, to_, tokenId);
+        }
+
+        // Check if any fractional amounts of tokens require ERC-721 handling.
+        uint256 senderFractionalAmount = erc20BalanceOfSenderBefore % units;
+        uint256 receiverFractionalAmount = erc20BalanceOf(to_) % units;
+
+        // Check if the sender needs to withdraw and store any ERC-721 tokens.
+        if (!isFromERC721TransferExempt && senderFractionalAmount > 0) {
+            _withdrawAndStoreERC721(from_);
+        }
+
+        // Check if the receiver needs to retrieve or mint any ERC-721 tokens.
+        if (!isToERC721TransferExempt && receiverFractionalAmount > 0) {
+            _retrieveOrMintERC721(to_);
+        }
+    }
+
+    // Return true to indicate a successful transfer.
+    return true;
+}
